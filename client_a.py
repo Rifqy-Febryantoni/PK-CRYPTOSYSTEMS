@@ -138,10 +138,32 @@ try:
     # 5. Kirim "Tiket" ke B sebagai pesan pertama
     print("[A] Mengirim 'tiket' terenkripsi ke B...")
     s_chat.sendall(c_bytes_for_b)
+    
+    # --- [BARU] HANDSHAKE PUBLIC KEY (Pertukaran Kunci Publik via DES) ---
+    # Agar variable 'b_public_key' terdefinisi
+    print("[A] Bertukar kunci publik dengan B untuk verifikasi tanda tangan...")
+    
+    # A. Kirim Public Key A ke B (Dienkripsi DES agar aman)
+    my_n, my_e = load_key(A_PUBLIC_KEY)
+    pubkey_str = f"{my_n}:{my_e}"
+    enc_pubkey = crypter.des_encrypt_text(pubkey_str, des_key_str)
+    s_chat.sendall(enc_pubkey.encode('utf-8'))
+    
+    # B. Terima Public Key B dari B
+    enc_b_pub = s_chat.recv(4096).decode('utf-8')
+    b_pub_str = crypter.des_decrypt_text(enc_b_pub, des_key_str)
+    b_n, b_e = map(int, b_pub_str.split(':'))
+    
+    # INILAH DEFINISI VARIABEL YANG HILANG TADI:
+    b_public_key = (b_n, b_e) 
+    print(f"[A] Kunci Publik B diterima & diverifikasi.")
+    # ---------------------------------------------------------------------
 
     # 6. Mulai chat
     print("\n--- Koneksi Chat Terhubung ---")
-    receiver = threading.Thread(target=message_receiver, args=(s_chat, des_key_str), daemon=True)
+    
+    # Sekarang 'b_public_key' sudah ada isinya, jadi thread ini tidak akan error
+    receiver = threading.Thread(target=message_receiver, args=(s_chat, des_key_str, b_public_key), daemon=True)
     receiver.start()
 
     while True:
@@ -149,9 +171,18 @@ try:
         if plaintext.lower() == 'exit':
             break
         
+        # --- [BARU] LOGIKA TANDA TANGAN (SIGNING) ---
+        # 1. Buat Tanda Tangan dari plaintext pakai Private Key A
+        signature = crypter.rsa_sign(plaintext, a_private_key)
+        
+        # 2. Enkripsi Pesan pakai DES
         ciphertext_hex = crypter.des_encrypt_text(plaintext, des_key_str)
-        print(f"[Log A - Encrypted]: Pesan '{plaintext}' dienkripsi menjadi -> {ciphertext_hex}")
-        s_chat.sendall(ciphertext_hex.encode('utf-8'))
+        
+        # 3. Gabungkan: SIGNATURE || CIPHERTEXT
+        payload = f"{signature}||{ciphertext_hex}"
+        
+        print(f"[Log A]: Sign & Encrypt -> {signature[:10]}... || {ciphertext_hex}")
+        s_chat.sendall(payload.encode('utf-8'))
 
 except Exception as e:
     print(f"[A] Gagal terhubung ke B: {e}")
