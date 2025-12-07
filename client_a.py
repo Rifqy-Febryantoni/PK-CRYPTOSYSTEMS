@@ -4,6 +4,7 @@ import os
 import time
 import socket
 import threading
+import sys
 import crypter as crypter
 
 # --- Konfigurasi Jaringan (SESUAI GNS3) ---
@@ -172,16 +173,34 @@ try:
             break
         
         # --- [BARU] LOGIKA TANDA TANGAN (SIGNING) ---
-        # 1. Buat Tanda Tangan dari plaintext pakai Private Key A
+        IS_HACKER_MODE = "--hack" in sys.argv
+    if IS_HACKER_MODE:
+        print("\n[⚠️ WARNING] PROGRAM BERJALAN DALAM MODE HACKER (Fake Signature)!")
+
+    while True:
+        plaintext = input("Enter message to send (or 'exit'): ")
+        if plaintext.lower() == 'exit':
+            break
+        
+        # 1. Buat Tanda Tangan ASLI dulu (Default)
         signature = crypter.rsa_sign(plaintext, a_private_key)
         
-        # 2. Enkripsi Pesan pakai DES
+        # 2. LOGIKA HACKER: Jika mode --hack aktif, timpa signature dengan sampah
+        if IS_HACKER_MODE:
+            print(f"[HACKER]: Mengganti signature asli ({signature[:8]}...) dengan PALSU!")
+            signature = "deadbeef00000000deadbeef00000000" # Hex string palsu
+        
+        # 3. Enkripsi Pesan pakai DES
         ciphertext_hex = crypter.des_encrypt_text(plaintext, des_key_str)
         
-        # 3. Gabungkan: SIGNATURE || CIPHERTEXT
+        # 4. Gabungkan (Signature yang dikirim tergantung mode di atas)
         payload = f"{signature}||{ciphertext_hex}"
         
-        print(f"[Log A]: Sign & Encrypt -> {signature[:10]}... || {ciphertext_hex}")
+        if IS_HACKER_MODE:
+             print(f"[Log A]: Sending CORRUPTED payload -> {signature} || {ciphertext_hex}")
+        else:
+             print(f"[Log A]: Sign & Encrypt -> {signature[:10]}... || {ciphertext_hex}")
+             
         s_chat.sendall(payload.encode('utf-8'))
 
 except Exception as e:
