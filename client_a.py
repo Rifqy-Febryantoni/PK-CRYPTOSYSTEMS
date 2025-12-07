@@ -1,11 +1,5 @@
 # socket_client_a.py
-
-import os
-import time
-import socket
-import threading
-import sys
-import crypter as crypter
+import os, socket, threading, sys, crypter
 
 # --- Konfigurasi ---
 KDC_HOST = '192.168.1.10'
@@ -13,132 +7,92 @@ KDC_PORT = 9000
 CHAT_HOST = '192.168.1.12'
 CHAT_PORT = 9001
 
-A_PUBLIC_KEY = 'a_public.key'
-A_PRIVATE_KEY = 'a_private.key'
+A_KEY_FILES = ('a_public.key', 'a_private.key')
 
-def save_key(filename, key_tuple):
-    n, val = key_tuple
-    with open(filename, 'w') as f: f.write(f"n = {n}\nkey_val = {val}\n")
+def save_key(f, k): 
+    with open(f, 'w') as file: file.write(f"n = {k[0]}\nkey_val = {k[1]}\n")
+def load_key(f):
+    d = {}
+    with open(f, 'r') as file: exec(file.read(), d)
+    return (d['n'], d['key_val'])
 
-def load_key(filename):
-    if not os.path.exists(filename): return None
-    key_data = {}
-    with open(filename, 'r') as f: exec(f.read(), key_data)
-    return (key_data['n'], key_data['key_val'])
-
-def message_receiver(sock, des_key, sender_pub_key):
-    print("\n[A] Penerima pesan aktif...")
+def receiver_thread(sock, des_key, sender_pub):
+    print("\n[A] Chat Ready. Waiting messages...")
     try:
         while True:
             data = sock.recv(4096).decode('utf-8')
             if not data: break
-            
             if "||" in data:
-                sig_hex, enc_msg = data.split("||")
-                plaintext = crypter.des_decrypt_text(enc_msg, des_key)
-                is_valid = crypter.rsa_verify(plaintext, sig_hex, sender_pub_key)
-                status = "✅ VALID" if is_valid else "❌ PALSU/CORRUPT"
-                print(f"\n[Incoming from B] [{status}]: {plaintext}")
-                print("Enter message (or 'exit'): ", end="", flush=True)
-            else:
-                print(f"\n[Raw Data]: {data}")
+                sig, enc = data.split("||")
+                plain = crypter.des_decrypt_text(enc, des_key)
+                valid = crypter.rsa_verify(plain, sig, sender_pub)
+                status = "✅ VALID" if valid else "❌ PALSU"
+                print(f"\n[B] [{status}]: {plain}")
+                print("Send (or exit): ", end="", flush=True)
+    except: os._exit(1)
 
-    except Exception as e:
-        print(f"[A] Error receiver: {e}")
-        os._exit(1)
+# --- SETUP ---
+print("--- Client A ---")
+if not os.path.exists(A_KEY_FILES[1]):
+    pub, priv = crypter.rsa_generate_keypair(1024)
+    save_key(A_KEY_FILES[0], pub); save_key(A_KEY_FILES[1], priv)
 
-# --- UTAMA ---
-print("--- Client A (Initiator) ---")
+a_priv = load_key(A_KEY_FILES[1])
+a_pub = load_key(A_KEY_FILES[0])
 
-# 1. Cek / Buat Kunci
-if not os.path.exists(A_PRIVATE_KEY):
-    print("Membuat kunci RSA A...")
-    pub, priv = crypter.rsa_generate_keypair(bits=1024)
-    save_key(A_PUBLIC_KEY, pub)
-    save_key(A_PRIVATE_KEY, priv)
-    
-    # Auto Register
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_kdc:
-            s_kdc.connect((KDC_HOST, KDC_PORT))
-            n, e = pub
-            s_kdc.sendall(f"REGISTER:A:{n}:{e}".encode('utf-8'))
-            if s_kdc.recv(1024) == b'OK:REGISTERED':
-                print("[A] Sukses mendaftar. Jalankan ulang untuk chat.")
-    except: pass
-    exit()
-
-a_private_key = load_key(A_PRIVATE_KEY)
-IS_HACKER_MODE = "--hack" in sys.argv
-
-# 2. Minta Kunci ke KDC
+# AUTO REGISTER
 try:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_kdc:
-        s_kdc.connect((KDC_HOST, KDC_PORT))
-        s_kdc.sendall(b"REQUEST:A:B")
-        
-        # Terima Kunci A
-        len_a = int.from_bytes(s_kdc.recv(4), 'big')
-        c_bytes_for_a = s_kdc.recv(len_a)
-        
-        # Terima Tiket B
-        len_b = int.from_bytes(s_kdc.recv(4), 'big')
-        c_bytes_for_b = s_kdc.recv(len_b)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((KDC_HOST, KDC_PORT))
+        s.sendall(f"REGISTER:A:{a_pub[0]}:{a_pub[1]}".encode())
+        if s.recv(1024) == b'OK:REGISTERED': print("[A] Registered to KDC.")
+except: pass
 
-except Exception as e:
-    print(f"[A] Gagal ke KDC: {e}")
-    exit()
-
-# Dekripsi Session Key
-c_int_for_a = int.from_bytes(c_bytes_for_a, 'big')
-des_key_bytes = crypter.rsa_decrypt_bytes(c_int_for_a, a_private_key, 8)
-des_key_str = des_key_bytes.decode('utf-8')
-print(f"[A] Session Key: {des_key_str}")
-
-# 3. Koneksi Chat ke B
+# REQUEST KEY & CONNECT
 try:
-    s_chat = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s_chat.connect((CHAT_HOST, CHAT_PORT))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as kdc:
+        kdc.connect((KDC_HOST, KDC_PORT))
+        kdc.sendall(b"REQUEST:A:B")
+        
+        len_a = int.from_bytes(kdc.recv(4), 'big')
+        c_bytes_a = kdc.recv(len_a)
+        
+        len_b = int.from_bytes(kdc.recv(4), 'big')
+        c_bytes_b = kdc.recv(len_b)
+        
+    c_int_a = int.from_bytes(c_bytes_a, 'big')
+    des_key = crypter.rsa_decrypt_bytes(c_int_a, a_priv, 8).decode()
+    print(f"[A] Session Key: {des_key}")
     
-    # A. Kirim Tiket
-    s_chat.sendall(c_bytes_for_b)
+    chat = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    chat.connect((CHAT_HOST, CHAT_PORT))
     
-    # B. Handshake Public Key
-    print("[A] Handshake Public Key...")
-    my_n, my_e = load_key(A_PUBLIC_KEY)
-    enc_pubkey = crypter.des_encrypt_text(f"{my_n}:{my_e}", des_key_str)
-    s_chat.sendall(enc_pubkey.encode('utf-8'))
+    # 1. Kirim Tiket ke B
+    chat.sendall(c_bytes_b)
     
-    enc_b_pub = s_chat.recv(4096).decode('utf-8')
-    b_pub_str = crypter.des_decrypt_text(enc_b_pub, des_key_str)
-    b_n, b_e = map(int, b_pub_str.split(':'))
-    b_public_key = (b_n, b_e)
+    # 2. Handshake Public Key
+    # Kirim A
+    chat.sendall(crypter.des_encrypt_text(f"{a_pub[0]}:{a_pub[1]}", des_key).encode())
+    # Terima B
+    enc_b = chat.recv(4096).decode()
+    b_str = crypter.des_decrypt_text(enc_b, des_key)
+    bn, be = map(int, b_str.split(':'))
+    b_pub = (bn, be)
+    print("[A] Handshake Complete.")
     
-    # 4. Mulai Receiver
-    receiver = threading.Thread(target=message_receiver, args=(s_chat, des_key_str, b_public_key), daemon=True)
-    receiver.start()
+    threading.Thread(target=receiver_thread, args=(chat, des_key, b_pub), daemon=True).start()
     
-    if IS_HACKER_MODE:
-        print("\n[⚠️ HACKER MODE AKTIF] Tanda tangan akan dipalsukan!")
-
+    HACKER = "--hack" in sys.argv
+    if HACKER: print("\n[⚠️ HACKER MODE] Signatures will be FAKE!")
+    
     while True:
-        plaintext = input("Enter message (or 'exit'): ")
-        if plaintext.lower() == 'exit': break
+        msg = input("Send (or exit): ")
+        if msg == 'exit': break
         
-        # --- LOGIKA HACKER ---
-        signature = crypter.rsa_sign(plaintext, a_private_key) # Signature Asli
+        sig = crypter.rsa_sign(msg, a_priv)
+        if HACKER: sig = "deadbeef" * 4 # FAKE SIG
         
-        if IS_HACKER_MODE:
-            signature = "deadbeef00000000deadbeef00000000" # Signature Palsu (Hex valid)
-            print(f"[HACKER] Sending FAKE signature: {signature}")
+        enc = crypter.des_encrypt_text(msg, des_key)
+        chat.sendall(f"{sig}||{enc}".encode())
         
-        ciphertext = crypter.des_encrypt_text(plaintext, des_key_str)
-        payload = f"{signature}||{ciphertext}"
-        
-        print(f"[Log A] Payload: {payload[:20]}...")
-        s_chat.sendall(payload.encode('utf-8'))
-
-except Exception as e:
-    print(f"[A] Error Chat: {e}")
-finally:
-    s_chat.close()
+except Exception as e: print(f"Error: {e}")
