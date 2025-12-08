@@ -1,11 +1,10 @@
-# socket_server_kdc.py
 import os
 import random
 import string
 import socket
 import crypter
 
-# --- Konfigurasi ---
+# Konfigurasi ---
 HOST = '0.0.0.0'
 KDC_PORT = 9000
 

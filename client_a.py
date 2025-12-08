@@ -1,7 +1,6 @@
-# socket_client_a.py
 import os, socket, threading, sys, crypter
 
-# --- Konfigurasi ---
+# Konfigurasi
 KDC_HOST = '192.168.1.10'
 KDC_PORT = 9000
 CHAT_HOST = '192.168.1.12'
@@ -16,22 +15,33 @@ def load_key(f):
     with open(f, 'r') as file: exec(file.read(), d)
     return (d['n'], d['key_val'])
 
+# PENERIMA PESAN
 def receiver_thread(sock, des_key, sender_pub):
-    print("\n[A] Chat Ready. Waiting messages...")
+    print("\n[A] Chat Ready. Mode: STRICT (Block Invalid Signatures)...")
     try:
         while True:
             data = sock.recv(4096).decode('utf-8')
             if not data: break
+            
             if "||" in data:
-                sig, enc = data.split("||")
-                plain = crypter.des_decrypt_text(enc, des_key)
-                valid = crypter.rsa_verify(plain, sig, sender_pub)
-                status = "✅ VALID" if valid else "❌ PALSU"
-                print(f"\n[B] [{status}]: {plain}")
+                sig_hex, enc_msg = data.split("||")
+                print(f"\n[Log Payload Received]:")
+                print(f"   > Signature: {sig_hex[:15]}...")
+                print(f"   > Ciphertext: {enc_msg}")
+                
+                plaintext = crypter.des_decrypt_text(enc_msg, des_key)
+                is_valid = crypter.rsa_verify(plaintext, sig_hex, sender_pub)
+                
+                if is_valid:
+                    print(f"[Incoming from B] [✅ VALID]: {plaintext}")
+                else:
+                    print(f"[⛔ SECURITY BLOCK]: Pesan diblokir! Tanda tangan digital PALSU.")
+                    print(f"(Isi pesan disembunyikan sistem)")
+                
                 print("Send (or exit): ", end="", flush=True)
     except: os._exit(1)
 
-# --- SETUP ---
+# SETUP
 print("--- Client A ---")
 if not os.path.exists(A_KEY_FILES[1]):
     pub, priv = crypter.rsa_generate_keypair(1024)
@@ -56,7 +66,6 @@ try:
         
         len_a = int.from_bytes(kdc.recv(4), 'big')
         c_bytes_a = kdc.recv(len_a)
-        
         len_b = int.from_bytes(kdc.recv(4), 'big')
         c_bytes_b = kdc.recv(len_b)
         
@@ -67,13 +76,11 @@ try:
     chat = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     chat.connect((CHAT_HOST, CHAT_PORT))
     
-    # 1. Kirim Tiket ke B
+    # 1. Kirim Tiket
     chat.sendall(c_bytes_b)
     
     # 2. Handshake Public Key
-    # Kirim A
     chat.sendall(crypter.des_encrypt_text(f"{a_pub[0]}:{a_pub[1]}", des_key).encode())
-    # Terima B
     enc_b = chat.recv(4096).decode()
     b_str = crypter.des_decrypt_text(enc_b, des_key)
     bn, be = map(int, b_str.split(':'))
@@ -89,10 +96,15 @@ try:
         msg = input("Send (or exit): ")
         if msg == 'exit': break
         
+        # 1. Sign (Asli atau Palsu)
         sig = crypter.rsa_sign(msg, a_priv)
         if HACKER: sig = "deadbeef" * 4 # FAKE SIG
         
+        # 2. Encrypt
         enc = crypter.des_encrypt_text(msg, des_key)
+        
+        # 3. Kirim
+        print(f"[Log Sending]: {sig[:10]}... || {enc}")
         chat.sendall(f"{sig}||{enc}".encode())
         
 except Exception as e: print(f"Error: {e}")
