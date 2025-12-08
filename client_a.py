@@ -90,7 +90,7 @@ try:
     threading.Thread(target=receiver_thread, args=(chat, des_key, b_pub), daemon=True).start()
     
     HACKER = "--hack" in sys.argv
-    if HACKER: print("\n[⚠️ HACKER MODE] Signatures will be FAKE!")
+    if HACKER: print("\n[⚠️ HACKER MODE]")
     
     while True:
         msg = input("Send (or exit): ")
@@ -98,13 +98,15 @@ try:
         
         # 1. Sign (Asli atau Palsu)
         sig = crypter.rsa_sign(msg, a_priv)
-        if HACKER: sig = "deadbeef" * 4 # FAKE SIG
+        if HACKER: sig = "signpalsu" * 4 # FAKE SIG
         
         # 2. Encrypt
         enc = crypter.des_encrypt_text(msg, des_key)
         
         # 3. Kirim
-        print(f"[Log Sending]: {sig[:10]}... || {enc}")
+        print(f"\n[Log Payload Sending]:")
+        print(f"   > Signature: {sig[:10]}...")
+        print(f"   > Ciphertext: {enc}")
         chat.sendall(f"{sig}||{enc}".encode())
         
 except Exception as e: print(f"Error: {e}")

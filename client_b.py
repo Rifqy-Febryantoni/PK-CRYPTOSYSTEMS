@@ -43,7 +43,6 @@ def receiver_thread(sock, des_key, sender_pub):
                 else:
                     # SEMBUNYIKAN JIKA PALSU
                     print(f"[⛔ SECURITY BLOCK]: Pesan diblokir! Tanda tangan digital PALSU.")
-                    print(f"(Isi pesan disembunyikan sistem karena integritas tidak terjamin)")
                 
                 print("Send (or exit): ", end="", flush=True)
             else:
@@ -103,4 +102,7 @@ with conn:
         if msg == 'exit': break
         sig = crypter.rsa_sign(msg, b_priv)
         enc = crypter.des_encrypt_text(msg, des_key)
+        print(f"\n[Log Payload Sending]:")
+        print(f"   > Signature: {sig[:10]}...")
+        print(f"   > Ciphertext: {enc}")
         conn.sendall(f"{sig}||{enc}".encode())
